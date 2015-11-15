@@ -6,6 +6,7 @@ import java.util.HashSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -26,29 +27,30 @@ public class UrlScanTask extends Thread {
 	private String url;
 	private String dirPath;
 	private ObservableList<ImageDownloadTask> imageDownloadTasks;
+	private ExecutorService executor;
 	private ProgressBar totalProgressBar;
 	private Label totalProgressBarPercentage;
 
 	private double total = 0, downloaded = 0;
-
-	public synchronized void increaseTotal(){
-		total++;
-	}
 	
 	public synchronized void increaseDownloaded(){
 		downloaded++;
+		updateTotalProgressBar();
 	}
 	
 	public synchronized void updateTotalProgressBar() {
 		double percentage = downloaded / total;
-		System.out.println(percentage);
 		Platform.runLater(new Runnable() {
 	        @Override
 	        public void run() {
 	        	totalProgressBar.setProgress(percentage);
-	    		totalProgressBarPercentage.setText(String.format("%.1f%%", percentage));
+	    		totalProgressBarPercentage.setText(String.format("%.1f%%", percentage * 100));
 	        }
 	      });
+	}
+	
+	public void redownload(ImageDownloadTask restartDownloader){
+		executor.execute(restartDownloader);
 	}
 
 	public UrlScanTask(String url, String dirPath,
@@ -80,6 +82,14 @@ public class UrlScanTask extends Thread {
 
 		return null;
 	}
+	
+	public void executeAllTask(){
+		for (ImageDownloadTask task : imageDownloadTasks) {
+			if (!task.isDone()) {
+				executor.execute(task);				
+			}
+		}
+	}
 
 	@Override
 	public void run() {
@@ -90,7 +100,7 @@ public class UrlScanTask extends Thread {
 		boolean reconnection = false;
 		int index = 1;
 
-		ExecutorService executor = Executors.newScheduledThreadPool(3,
+		executor = Executors.newScheduledThreadPool(3,
 				new ThreadFactory() {
 					@Override
 					public Thread newThread(Runnable r) {
@@ -119,9 +129,8 @@ public class UrlScanTask extends Thread {
 								String.format("%03d.jpg", index++), dirPath,
 								e.attr("src"), this);
 						imageDownloadTasks.add(imageDownloader);
-						this.increaseTotal();
+						total++;
 						this.updateTotalProgressBar();
-//						executor.execute(imageDownloader);
 					}
 				}
 			} catch (SocketTimeoutException e) {
@@ -133,13 +142,16 @@ public class UrlScanTask extends Thread {
 				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}
-		} while (!nextURL.equals(nowURL) || reconnection);
-
-		for (ImageDownloadTask task : imageDownloadTasks) {
-			if (!task.isDone()) {
-				executor.execute(task);
-			}
-		}
+		} while (!nextURL.equals(nowURL) || reconnection);		
+		
+		executeAllTask();
+		
+		try {
+			while (!executor.awaitTermination(1, TimeUnit.SECONDS));
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}  
 	}
 
 }

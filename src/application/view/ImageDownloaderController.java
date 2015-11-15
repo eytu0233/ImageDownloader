@@ -1,6 +1,5 @@
 package application.view;
 
-import java.awt.datatransfer.StringSelection;
 import java.io.File;
 
 import application.MainApp;
@@ -39,6 +38,7 @@ public class ImageDownloaderController {
 	private MenuItem reDownloadMenuItem;
 
 	private MainApp mainApp;
+	private UrlScanTask urlScanTask = null;
 
 	/**
 	 * Initializes the controller class. This method is automatically called
@@ -73,6 +73,7 @@ public class ImageDownloaderController {
 			ImageDownloadTask restartDownloader = new ImageDownloadTask(downloadTask.getFileName(), downloadTask.getDirectory(), downloadTask.getUrl());
 			mainApp.getImageDownloadTasks().remove(downloadTask);
 			mainApp.getImageDownloadTasks().add(restartDownloader);
+			if(urlScanTask != null) urlScanTask.executeAllTask();
 		});
 	}
 
@@ -85,7 +86,7 @@ public class ImageDownloaderController {
 			totalProgressBar.setProgress(0);
 			
 			String dirPath = selectedDirectory.getAbsolutePath();
-			UrlScanTask urlScanTask = new UrlScanTask(urlTextField.getText(),
+			urlScanTask = new UrlScanTask(urlTextField.getText(),
 					dirPath, mainApp.getImageDownloadTasks(), totalProgressBar, totalProgressBarPercentage);
 			urlScanTask.setDaemon(true);
 			urlScanTask.start();

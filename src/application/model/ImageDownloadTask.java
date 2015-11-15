@@ -9,13 +9,11 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.SocketTimeoutException;
 import java.net.URL;
-
-import org.apache.commons.io.FileUtils;
+import java.util.concurrent.CountDownLatch;
 
 import javafx.application.Platform;
 import javafx.beans.property.*;
@@ -29,11 +27,13 @@ public class ImageDownloadTask extends Task<Void> {
 	private StringProperty directory;
 	private StringProperty url;
 
-	private static UrlScanTask urlScanTask = null;
+	private UrlScanTask urlScanTask;
 
 	private long size = 0;
 
 	private int retry = 3;
+	
+	private Object lock = new Object();
 
 	/**
 	 * Default constructor.
@@ -51,12 +51,12 @@ public class ImageDownloadTask extends Task<Void> {
 		this.fileName = new SimpleStringProperty(fileName);
 		this.directory = new SimpleStringProperty(directory);
 		this.url = new SimpleStringProperty(url);
-		if(urlScanTask == null) this.urlScanTask = urlScanTask;
+		this.urlScanTask = urlScanTask;
 
 		this.updateProgress(ProgressIndicator.INDETERMINATE_PROGRESS, 1);
 		this.updateMessage("等待排程");
 	}
-	
+
 	/**
 	 * Constructor with some initial data.
 	 * 
@@ -89,7 +89,7 @@ public class ImageDownloadTask extends Task<Void> {
 	}
 
 	public void setFileSize(String firstName) {
-		this.fileSize.set(firstName);
+		getFileSizeProperty().set(firstName);
 	}
 
 	public StringProperty getFileSizeProperty() {
@@ -124,10 +124,10 @@ public class ImageDownloadTask extends Task<Void> {
 		if (url == null)
 			this.url = new SimpleStringProperty(this, "url");
 		return url;
-	}	
+	}
 
 	@Override
-	protected Void call() {
+	protected Void call() throws Exception {
 		// TODO Auto-generated method stub
 
 		this.updateMessage("下載中");
@@ -141,27 +141,10 @@ public class ImageDownloadTask extends Task<Void> {
 
 		File imageFile = new File(getDirectory() + "/" + getFileName());
 		if (imageFile.exists()) {
-			try {
-				Thread.sleep(1500);
-			} catch (InterruptedException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
+			Thread.sleep(100);
 
 			size = imageFile.length();
-			this.setFileSize(String.format("%.1f KB",
-					(size > 0) ? ((float) size / 1024) : 0));
 
-			urlScanTask.increaseDownloaded();
-			urlScanTask.updateTotalProgressBar();
-			Platform.runLater(new Runnable() {
-		        @Override
-		        public void run() {
-					updateProgress(1, 1);
-					updateMessage("下載完成");
-		        }
-		      });
-			
 			return null;
 		}
 
@@ -176,7 +159,7 @@ public class ImageDownloadTask extends Task<Void> {
 		do {
 			try {
 				conn = (HttpURLConnection) url.openConnection();
-				conn.connect();				
+				conn.connect();
 			} catch (SocketTimeoutException e) {
 				System.out.println(getFileName() + " : Socket Timeout");
 				try {
@@ -185,17 +168,12 @@ public class ImageDownloadTask extends Task<Void> {
 					// TODO Auto-generated catch block
 					e1.printStackTrace();
 				}
-				if(retry-- > 0)	continue;
+				if (retry-- > 0)
+					continue;
 				else {
-					Platform.runLater(new Runnable() {
-				        @Override
-				        public void run() {
-							updateMessage("下載失敗");
-				        }
-				      });
-					return null;
+					throw new Exception();
 				}
-			}catch (IOException e) {
+			} catch (IOException e) {
 				System.out.println(getFileName() + " : URL Connection fail");
 				try {
 					Thread.sleep(500);
@@ -203,40 +181,28 @@ public class ImageDownloadTask extends Task<Void> {
 					// TODO Auto-generated catch block
 					e1.printStackTrace();
 				}
-				if(retry-- > 0)	continue;
+				if (retry-- > 0)
+					continue;
 				else {
-					Platform.runLater(new Runnable() {
-				        @Override
-				        public void run() {
-							updateMessage("下載失敗");
-				        }
-				      });
-					return null;
+					throw new Exception();
 				}
 			}
-			
+
 			size = conn.getContentLength();
 			if (size > 0)
 				break;
 			else {
-				try {
-					System.out.println(getFileName()
-							+ " file size can't get.");
-					if(retry-- <= 0) break;
-					if (conn != null)
-						conn.disconnect();
-					Thread.sleep(1000);
-				} catch (InterruptedException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
-				}
+				System.out.println(getFileName() + " file size can't get.");
+				if (retry-- <= 0)
+					break;
+				if (conn != null)
+					conn.disconnect();
+				Thread.sleep(1000);
 			}
 		} while (true);
 
 		DataInputStream dis = null;
 		DataOutputStream dos = null;
-		byte b = 0;
-		int tatolBytes = 0;
 
 		while (true) {
 			try {
@@ -262,15 +228,14 @@ public class ImageDownloadTask extends Task<Void> {
 		}
 
 		while (true) {
-			try {
 
-				// FileUtils.copyURLToFile(url, imageFile,
-				// 3000, 3000);
+			byte b = 0;
+
+			try {
 
 				while (true) {
 					b = dis.readByte();
 					dos.writeByte(b);
-					updateProgress((++tatolBytes) / size, 1);
 				}
 
 			} catch (EOFException e) {
@@ -281,7 +246,6 @@ public class ImageDownloadTask extends Task<Void> {
 					// TODO Auto-generated catch block
 					e1.printStackTrace();
 				}
-				updateProgress((++tatolBytes) / size, 1);
 
 				if (imageFile.length() < size) {
 					// System.out.println("The file is downloaded incompletely.");
@@ -289,14 +253,6 @@ public class ImageDownloadTask extends Task<Void> {
 					continue;
 				}
 
-				Platform.runLater(new Runnable() {
-			        @Override
-			        public void run() {
-						updateMessage("下載完成");
-			        }
-			      });
-				System.out.println(getFileName()
-						+ " download succeess.");
 				break;
 			} catch (IOException e) {
 				e.printStackTrace();
@@ -306,54 +262,58 @@ public class ImageDownloadTask extends Task<Void> {
 					// TODO Auto-generated catch block
 					e1.printStackTrace();
 				}
-				System.out.println(e.toString() + " : "
-						+ getFileName());
+				System.out.println(e.toString() + " : " + getFileName());
 			}
 		}
-
-		try {
-			dis.close();
-			dos.close();
-			conn.disconnect();
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-		// while (true) {
-		// try {
-		// FileUtils.copyURLToFile(url, imageFile, 3000, 3000);
-		// updateMessage("下載完成");
-		// updateProgress(1, 1);
-		// break;
-		// } catch (IOException e) {
-		// System.out.println(getUrl().substring(
-		// getUrl().lastIndexOf("/") + 1)
-		// + " time out.");
-		// try {
-		// Thread.sleep(1000);
-		// } catch (InterruptedException e1) {
-		// // TODO Auto-generated catch block
-		// e1.printStackTrace();
-		// }
-		// continue;
-		// }
-		// }
+		
+		dis.close();
+		dos.close();
+		conn.disconnect();
 
 		if (size < 0) {
 			size = imageFile.length();
 		}
-		this.setFileSize(String.format("%.1f KB",
-				(size > 0) ? ((float) size / 1024) : 0));
+		
+		final CountDownLatch latch = new CountDownLatch(1);
+		Platform.runLater(()->{
+			try{
+				setFileSize(String.format("%.1f KB",
+					(size > 0) ? ((float) size / 1024) : 0));
+				updateProgress(1, 1);
+				updateMessage("下載完成");
+			}catch(Exception e){
+				e.printStackTrace();
+			}finally{
+				latch.countDown();
+			}			
+		});
+		
+		try {
+			latch.await();
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
 
 		return null;
 	}
 
 	@Override
-	protected void succeeded() {
+	protected void failed() {
 		// TODO Auto-generated method stub
-		super.succeeded();
-		urlScanTask.increaseDownloaded();
-		urlScanTask.updateTotalProgressBar();
+		Platform.runLater(new Runnable() {
+			@Override
+			public void run() {
+				updateMessage("下載失敗");
+			}
+		});
+		super.failed();
 	}
 
+	@Override
+	protected void succeeded() {
+		// TODO Auto-generated method stub	
+		urlScanTask.increaseDownloaded();
+		super.succeeded();
+	}
 }
